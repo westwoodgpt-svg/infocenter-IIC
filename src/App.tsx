@@ -130,10 +130,7 @@ export default function App() {
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white font-display flex flex-wrap items-center gap-x-3 gap-y-1.5">
               Инфоцентр
               <span className="font-mono font-black tracking-tighter flex items-center text-lg md:text-2xl select-none px-2.5 py-0.5 bg-zinc-900 rounded-xl border border-[#27272a] shadow-[0_0_15px_rgba(245,158,11,0.05)]">
-                <span className="text-amber-400">&lt;</span>
-                <span className="text-white">|</span>
-                <span className="text-amber-400">&gt;</span>
-                <span className="text-white ml-1">ИИЦ</span>
+                <span className="text-white">ИИЦ</span>
               </span>
             </h1>
             <div className="flex flex-wrap items-center gap-4 text-xs text-[#a1a1aa] pt-1.5">
