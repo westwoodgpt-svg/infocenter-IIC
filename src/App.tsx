@@ -16,6 +16,10 @@ import {
   Upload,
   RotateCcw,
   Eraser,
+  RefreshCw,
+  Wifi,
+  WifiOff,
+  AlertTriangle,
 } from 'lucide-react';
 
 import { TabId, DashboardState, AnyCard } from './types';
@@ -27,7 +31,22 @@ export default function App() {
   const [editMode, setEditMode] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { state, addCard, updateCard, deleteCard, moveCard, resetToSeed, clearAll, replaceAll } = useDashboardStore();
+  const {
+    state,
+    syncMode,
+    syncStatus,
+    syncError,
+    lastSyncedAt,
+    refresh,
+    addCard,
+    updateCard,
+    deleteCard,
+    moveCard,
+    resetToSeed,
+    clearAll,
+    replaceAll,
+  } = useDashboardStore();
+  const isShared = syncMode === 'bitrix';
 
   const formattedToday = useMemo(() => {
     return new Date().toLocaleDateString('ru-RU', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -78,15 +97,17 @@ export default function App() {
     e.target.value = '';
   };
 
+  const sharedWarning = isShared ? ' Это отразится у всех пользователей портала.' : '';
+
   const handleReset = () => {
-    if (confirm('Восстановить пример ИИЦ? Текущие карточки на всех вкладках будут заменены.')) {
+    if (confirm(`Восстановить пример ИИЦ? Текущие карточки на всех вкладках будут заменены.${sharedWarning}`)) {
       resetToSeed();
       setMenuOpen(false);
     }
   };
 
   const handleClear = () => {
-    if (confirm('Очистить все вкладки? Это удалит все карточки без возможности отмены (кроме экспортированного JSON).')) {
+    if (confirm(`Очистить все вкладки? Это удалит все карточки без возможности отмены (кроме экспортированного JSON).${sharedWarning}`)) {
       clearAll();
       setMenuOpen(false);
     }
@@ -124,10 +145,46 @@ export default function App() {
                 <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
                 <span>Карточек всего: <span className="text-white">{totalCards}</span></span>
               </span>
+              {syncMode !== 'checking' && (
+                <span
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-full border ${
+                    isShared
+                      ? syncStatus === 'error'
+                        ? 'bg-rose-500/10 border-rose-500/25 text-rose-300'
+                        : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300'
+                      : 'bg-[#161619] border-[#27272a] text-[#a1a1aa]'
+                  }`}
+                >
+                  {isShared ? (
+                    syncStatus === 'error' ? <AlertTriangle className="w-3.5 h-3.5" /> : <Wifi className="w-3.5 h-3.5" />
+                  ) : (
+                    <WifiOff className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {isShared
+                      ? syncStatus === 'saving'
+                        ? 'Синхронизация с Битрикс24…'
+                        : syncStatus === 'error'
+                        ? `Не сохранилось в Битрикс24${syncError ? `: ${syncError}` : ''}`
+                        : `Общие данные Битрикс24${lastSyncedAt ? ` · ${lastSyncedAt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : ''}`
+                      : 'Автономный режим (только этот браузер)'}
+                  </span>
+                </span>
+              )}
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            {isShared && (
+              <button
+                onClick={refresh}
+                disabled={syncStatus === 'saving'}
+                title="Подтянуть последние изменения от коллег"
+                className="p-2.5 rounded-xl bg-zinc-800/60 border border-zinc-700/60 text-zinc-300 hover:text-white transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${syncStatus === 'saving' ? 'animate-spin' : ''}`} />
+              </button>
+            )}
             <button
               onClick={() => setEditMode((v) => !v)}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-colors ${
@@ -208,6 +265,25 @@ export default function App() {
           </div>
         </motion.nav>
 
+        {isShared && syncStatus === 'error' && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="elegant-card rounded-2xl p-4 border border-rose-500/30 bg-rose-500/5 flex items-start gap-3"
+          >
+            <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+            <div className="text-xs text-rose-200/90 leading-relaxed">
+              <p className="font-semibold text-rose-300">
+                Не удалось сохранить изменения в Битрикс24{syncError ? `: ${syncError}` : ''}.
+              </p>
+              <p className="mt-1 text-rose-200/70">
+                Показаны последние известные данные. Попробуйте нажать «Обновить» — если ошибка повторится,
+                проверьте права приложения на портале (нужен доступ к app.option) и повторите позже.
+              </p>
+            </div>
+          </motion.div>
+        )}
+
         <main className="min-h-[400px]">
           <motion.div key={activeTab} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
             <TabBoard
@@ -236,9 +312,21 @@ export default function App() {
             <p>
               Включите «Режим редактирования», чтобы добавлять, изменять и удалять карточки на любой вкладке —
               KPI, графики (столбчатые, линейные, с областями, круговые), сметы, списки и карточки ответственных.
-              Все изменения сохраняются прямо в этом браузере. Чтобы не потерять данные или перенести их на другое
-              устройство — экспортируйте JSON через значок настроек.
             </p>
+            {isShared ? (
+              <p>
+                Приложение открыто внутри Битрикс24 — все изменения сохраняются в общих данных портала
+                (<code className="bg-[#1c1c1f] px-1.5 py-0.5 rounded text-amber-400 border border-[#2d2d34] font-mono">app.option</code>)
+                и видны любому сотруднику, открывшему инфоцентр. Правки других пользователей подтягиваются при
+                возврате на вкладку или по кнопке обновления рядом с режимом редактирования; если два человека
+                правят одновременно, сохраняется последняя версия.
+              </p>
+            ) : (
+              <p>
+                Открыто вне Битрикс24 — изменения сохраняются только в этом браузере. Чтобы не потерять данные
+                или перенести их на другое устройство, экспортируйте JSON через значок настроек.
+              </p>
+            )}
           </div>
         </motion.footer>
 

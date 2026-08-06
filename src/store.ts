@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnyCard, DashboardState, TabId } from './types';
 import { SEED_DATA, EMPTY_DASHBOARD } from './seedData';
+import { bx24Init, fetchDashboardOption, isInIframe, saveDashboardOption } from './bitrix';
 
 const STORAGE_KEY = 'iic-dashboard-v1';
+
+export type SyncMode = 'checking' | 'bitrix' | 'local';
+export type SyncStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 function loadInitial(): DashboardState {
   try {
@@ -30,10 +34,102 @@ export function newCardId() {
 
 export function useDashboardStore() {
   const [state, setState] = useState<DashboardState>(() => loadInitial());
+  const [syncMode, setSyncMode] = useState<SyncMode>('checking');
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
+  const skipNextPush = useRef(false);
+
+  // Всегда кэшируем в localStorage — это и офлайн-хранилище вне Битрикс24,
+  // и мгновенная копия на случай, если запрос к app.option не успеет/упадёт.
   useEffect(() => {
     persist(state);
   }, [state]);
+
+  const pullFromBitrix = useCallback(async (applyEvenIfEmpty = false) => {
+    setSyncStatus('saving');
+    const { state: remote, error } = await fetchDashboardOption();
+    if (error) {
+      setSyncStatus('error');
+      setSyncError(error);
+      return;
+    }
+    if (remote) {
+      skipNextPush.current = true;
+      setState(remote);
+      setLastSyncedAt(new Date());
+    } else if (applyEvenIfEmpty) {
+      // ничего не сохранено на портале ещё — оставляем текущее (localStorage/пример)
+    }
+    setSyncStatus('saved');
+    setSyncError(null);
+  }, []);
+
+  // Первичная инициализация: определяем, встроены ли мы в Битрикс24, и если да —
+  // подключаем SDK и подтягиваем общие данные портала.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!isInIframe()) {
+        setSyncMode('local');
+        return;
+      }
+      const ready = await bx24Init();
+      if (cancelled) return;
+      if (!ready) {
+        setSyncMode('local');
+        return;
+      }
+      await pullFromBitrix(true);
+      if (cancelled) return;
+      setSyncMode('bitrix');
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Каждое изменение данных отправляем в app.option, если подключены к Битрикс24.
+  useEffect(() => {
+    if (syncMode !== 'bitrix') return;
+    if (skipNextPush.current) {
+      skipNextPush.current = false;
+      return;
+    }
+    let cancelled = false;
+    setSyncStatus('saving');
+    saveDashboardOption(state).then(({ ok, error }) => {
+      if (cancelled) return;
+      if (ok) {
+        setSyncStatus('saved');
+        setSyncError(null);
+        setLastSyncedAt(new Date());
+      } else {
+        setSyncStatus('error');
+        setSyncError(error);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, syncMode]);
+
+  // Подхватываем правки других пользователей, когда вкладка снова становится активной.
+  useEffect(() => {
+    if (syncMode !== 'bitrix') return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') pullFromBitrix();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [syncMode, pullFromBitrix]);
 
   const addCard = useCallback((tab: TabId, card: AnyCard) => {
     setState((prev) => ({ ...prev, [tab]: [...prev[tab], card] }));
@@ -67,6 +163,21 @@ export function useDashboardStore() {
   const resetToSeed = useCallback(() => setState(SEED_DATA), []);
   const clearAll = useCallback(() => setState(EMPTY_DASHBOARD), []);
   const replaceAll = useCallback((next: DashboardState) => setState(next), []);
+  const refresh = useCallback(() => pullFromBitrix(), [pullFromBitrix]);
 
-  return { state, addCard, updateCard, deleteCard, moveCard, resetToSeed, clearAll, replaceAll };
+  return {
+    state,
+    syncMode,
+    syncStatus,
+    syncError,
+    lastSyncedAt,
+    refresh,
+    addCard,
+    updateCard,
+    deleteCard,
+    moveCard,
+    resetToSeed,
+    clearAll,
+    replaceAll,
+  };
 }
