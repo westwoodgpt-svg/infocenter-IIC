@@ -1,60 +1,70 @@
-export interface KpiCheckpoint {
+export type TabId = 'security' | 'quality' | 'production' | 'costs' | 'personnel';
+
+export type ChartType = 'bar' | 'line' | 'area' | 'pie';
+
+export type CardType = 'kpi' | 'chart' | 'money' | 'list' | 'person';
+
+interface BaseCard {
   id: string;
+  type: CardType;
   title: string;
+  subtitle?: string;
+}
+
+export interface KpiCard extends BaseCard {
+  type: 'kpi';
   planValue: string;
-  planDate: string;
+  planDate?: string;
   factValue: string;
   factDate?: string;
   percent: number | null;
 }
 
-export interface SubsidyProgram {
-  title: string;
-  agreement: string;
-  year: number;
-  items: KpiCheckpoint[];
+export interface ChartRow {
+  category: string;
+  values: number[];
 }
 
-export interface SmetaLine {
-  title: string;
-  agreement: string;
-  year: number;
+export interface ChartCard extends BaseCard {
+  type: 'chart';
+  chartType: ChartType;
+  seriesNames: string[];
+  rows: ChartRow[];
+}
+
+export interface MoneyCard extends BaseCard {
+  type: 'money';
   plan: number;
   fact: number;
-  asOf: string;
-  responsible: string;
 }
 
-export interface EngagementPoint {
-  year: string;
-  seminarParticipants: number | null;
-  supportRecipients: number | null;
+export interface ListCard extends BaseCard {
+  type: 'list';
+  items: string[];
 }
 
-export interface ResponsiblePerson {
-  name: string;
+export interface PersonCard extends BaseCard {
+  type: 'person';
   role: string;
-  areas: string[];
-  birthday?: string;
+  tags: string[];
+  note?: string;
 }
 
-export interface TaskDisciplineStatus {
-  periodicity: string;
-  responsible: string;
-  lastReviewed: string | null;
-  causesInside: string[];
-  causesOutside: string[];
-}
+export type AnyCard = KpiCard | ChartCard | MoneyCard | ListCard | PersonCard;
 
-export interface IicDashboardData {
-  updated: string;
-  kpiSoderzhanie: SubsidyProgram;
-  kpiFinPodderzhka: SubsidyProgram;
-  smety: SmetaLine[];
-  engagement: EngagementPoint[];
-  efficiencyFactors: string[];
-  responsible: ResponsiblePerson[];
-  taskDiscipline: TaskDisciplineStatus;
-}
+export type DashboardState = Record<TabId, AnyCard[]>;
 
-export type TabId = 'security' | 'quality' | 'production' | 'costs' | 'personnel';
+export const CARD_TYPE_LABELS: Record<CardType, string> = {
+  kpi: 'KPI (план/факт/%)',
+  chart: 'График',
+  money: 'Смета (план/факт)',
+  list: 'Список',
+  person: 'Ответственный',
+};
+
+export const CHART_TYPE_LABELS: Record<ChartType, string> = {
+  bar: 'Столбчатый',
+  line: 'Линейный',
+  area: 'С областями',
+  pie: 'Круговой',
+};
