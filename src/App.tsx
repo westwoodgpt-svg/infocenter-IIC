@@ -236,7 +236,7 @@ export default function App() {
           transition={{ delay: 0.1 }}
           className="elegant-card rounded-3xl p-2"
         >
-          <div className="flex flex-wrap md:flex-nowrap gap-1.5">
+          <div className="flex md:flex-wrap gap-1.5 overflow-x-auto md:overflow-visible -mx-2 px-2 md:mx-0 md:px-0 snap-x snap-mandatory scrollbar-none">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -244,7 +244,7 @@ export default function App() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as TabId)}
-                  className={`relative flex-1 min-w-[120px] md:min-w-0 flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold transition-all duration-200 border border-transparent font-display ${
+                  className={`relative flex-none md:flex-1 min-w-[132px] md:min-w-0 snap-start flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold transition-all duration-200 border border-transparent font-display ${
                     isActive ? `${tab.activeText}` : `text-[#a1a1aa] hover:text-white ${tab.hoverBg}`
                   }`}
                   style={isActive ? { boxShadow: `0 0 15px ${tab.shadowColor}` } : {}}

@@ -3,7 +3,7 @@ import { PersonCard } from '../../types';
 
 export default function PersonCardView({ card }: { card: PersonCard }) {
   return (
-    <div className="p-6 pr-16 flex flex-col gap-4">
+    <div className="p-6 flex flex-col gap-4">
       <div className="flex items-start gap-4">
         <span className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20 flex-shrink-0">
           <UserRound className="w-5 h-5" />

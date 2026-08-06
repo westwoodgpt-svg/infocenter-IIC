@@ -9,7 +9,7 @@ export default function MoneyCardView({ card }: { card: MoneyCard }) {
   const remainder = card.plan - card.fact;
 
   return (
-    <div className="p-6 pr-16">
+    <div className="p-6">
       <div className="flex items-start justify-between gap-4 mb-1">
         <div>
           <h3 className="text-base font-bold text-white flex items-center gap-2 font-display">

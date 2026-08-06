@@ -41,7 +41,7 @@ export default function ChartCardView({ card }: { card: ChartCard }) {
   const hasData = card.rows.length > 0 && card.seriesNames.length > 0;
 
   return (
-    <div className="p-6 pr-16">
+    <div className="p-6">
       <div className="mb-3">
         <h3 className="text-base font-bold text-white flex items-center gap-2 font-display">
           <BarChart3 className="w-4 h-4 text-blue-400" /> {card.title}

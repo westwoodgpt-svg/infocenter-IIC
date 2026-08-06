@@ -19,8 +19,19 @@ declare global {
 
 interface BXResult {
   error: () => { ex?: { error_description?: string }; error_description?: string } | null;
-  data: () => Record<string, string>;
+  data: () => unknown;
+  more: () => boolean;
+  next: (cb: (result: BXResult) => void) => void;
 }
+
+export interface PortalUser {
+  id: string;
+  name: string;
+  position: string;
+  photo: string;
+}
+
+const MAX_USER_PAGES = 20; // защита от бесконечного цикла на очень больших порталах
 
 export function isInIframe(): boolean {
   try {
@@ -72,7 +83,7 @@ export function fetchDashboardOption(): Promise<{ state: DashboardState | null; 
         resolve({ state: null, error: bxErrorMessage(result) });
         return;
       }
-      const options = result.data() || {};
+      const options = (result.data() as Record<string, string>) || {};
       const raw = options[OPTION_KEY];
       if (!raw) {
         resolve({ state: null, error: null });
@@ -100,5 +111,65 @@ export function saveDashboardOption(state: DashboardState): Promise<{ ok: boolea
       }
       resolve({ ok: true, error: null });
     });
+  });
+}
+
+interface RawBxUser {
+  ID: string;
+  NAME?: string;
+  LAST_NAME?: string;
+  SECOND_NAME?: string;
+  WORK_POSITION?: string;
+  PERSONAL_PHOTO?: string;
+}
+
+function formatUserName(u: RawBxUser): string {
+  return [u.LAST_NAME, u.NAME, u.SECOND_NAME].filter(Boolean).join(' ').trim() || `ID ${u.ID}`;
+}
+
+// Список активных сотрудников портала — для выбора ответственного в карточке
+// «Ответственный» выпадающим списком вместо ручного ввода ФИО. Классический
+// BX24 REST отдаёт user.get постранично (по 50), поэтому докручиваем через
+// result.more()/result.next() с защитным лимитом страниц.
+export function fetchPortalUsers(): Promise<{ users: PortalUser[]; error: string | null }> {
+  return new Promise((resolve) => {
+    if (!hasBX24()) {
+      resolve({ users: [], error: null });
+      return;
+    }
+
+    const collected: PortalUser[] = [];
+    let pages = 0;
+
+    const handlePage = (result: BXResult) => {
+      if (result.error()) {
+        resolve({ users: collected, error: bxErrorMessage(result) });
+        return;
+      }
+      const rows = (result.data() as RawBxUser[]) || [];
+      rows.forEach((u) => {
+        collected.push({
+          id: u.ID,
+          name: formatUserName(u),
+          position: u.WORK_POSITION || '',
+          photo: u.PERSONAL_PHOTO || '',
+        });
+      });
+      pages += 1;
+      if (result.more() && pages < MAX_USER_PAGES) {
+        result.next(handlePage);
+      } else {
+        resolve({ users: collected, error: null });
+      }
+    };
+
+    window.BX24!.callMethod(
+      'user.get',
+      {
+        FILTER: { ACTIVE: true },
+        SELECT: ['ID', 'NAME', 'LAST_NAME', 'SECOND_NAME', 'WORK_POSITION', 'PERSONAL_PHOTO'],
+      },
+      handlePage
+    );
   });
 }

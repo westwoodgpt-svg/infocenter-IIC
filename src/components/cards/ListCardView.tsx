@@ -3,7 +3,7 @@ import { ListCard } from '../../types';
 
 export default function ListCardView({ card }: { card: ListCard }) {
   return (
-    <div className="p-6 pr-16">
+    <div className="p-6">
       <h3 className="text-base font-bold text-white flex items-center gap-2 font-display">
         <ListChecks className="w-4 h-4 text-amber-400" /> {card.title}
       </h3>

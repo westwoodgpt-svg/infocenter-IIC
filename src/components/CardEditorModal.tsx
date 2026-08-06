@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Plus, Trash2 } from 'lucide-react';
 import {
@@ -14,6 +15,7 @@ import {
   PersonCard,
 } from '../types';
 import { newCardId } from '../store';
+import { usePortalUsers } from '../usePortalUsers';
 
 interface CardEditorModalProps {
   open: boolean;
@@ -58,6 +60,8 @@ function labelCls() {
 export default function CardEditorModal({ open, editingCard, onClose, onSave }: CardEditorModalProps) {
   const [pickedType, setPickedType] = useState<CardType | null>(editingCard?.type ?? null);
   const [draft, setDraft] = useState<AnyCard | null>(editingCard);
+  const { users: portalUsers } = usePortalUsers();
+  const isPersonPicker = pickedType === 'person' && portalUsers.length > 0;
 
   useMemo(() => {
     setPickedType(editingCard?.type ?? null);
@@ -78,7 +82,10 @@ export default function CardEditorModal({ open, editingCard, onClose, onSave }: 
     onSave(draft);
   };
 
-  return (
+  // Портал в document.body — иначе fixed-оверлей позиционируется относительно
+  // ближайшего анимируемого предка (motion.div со своим transform), а не
+  // окна целиком, и на практике оказывается прокручен далеко за пределы экрана.
+  return createPortal(
     <AnimatePresence>
       <motion.div
         initial={{ opacity: 0 }}
@@ -128,13 +135,38 @@ export default function CardEditorModal({ open, editingCard, onClose, onSave }: 
                   </div>
 
                   <div>
-                    <label className={labelCls()}>Заголовок</label>
+                    <label className={labelCls()}>{draft.type === 'person' ? 'ФИО' : 'Заголовок'}</label>
                     <input
                       className={inputCls()}
                       value={draft.title}
-                      onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-                      placeholder="Название карточки"
+                      list={isPersonPicker ? 'employee-options' : undefined}
+                      onChange={(e) => {
+                        const title = e.target.value;
+                        if (draft.type === 'person') {
+                          const matched = portalUsers.find((u) => u.name === title);
+                          setDraft({
+                            ...draft,
+                            title,
+                            role: matched && !draft.role ? matched.position : draft.role,
+                          });
+                          return;
+                        }
+                        setDraft({ ...draft, title });
+                      }}
+                      placeholder={draft.type === 'person' ? 'Иванов Иван Иванович' : 'Название карточки'}
                     />
+                    {isPersonPicker && (
+                      <>
+                        <p className="text-[11px] text-[#71717a] mt-1">
+                          Начните вводить — подставим сотрудников портала ({portalUsers.length})
+                        </p>
+                        <datalist id="employee-options">
+                          {portalUsers.map((u) => (
+                            <option key={u.id} value={u.name} />
+                          ))}
+                        </datalist>
+                      </>
+                    )}
                   </div>
 
                   <div>
@@ -173,7 +205,8 @@ export default function CardEditorModal({ open, editingCard, onClose, onSave }: 
           )}
         </motion.div>
       </motion.div>
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }
 

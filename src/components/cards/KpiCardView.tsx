@@ -13,7 +13,7 @@ export default function KpiCardView({ card }: { card: KpiCard }) {
   const barWidth = card.percent === null ? 0 : Math.min(Math.max(card.percent, 0), 100);
 
   return (
-    <div className="p-5 pr-24">
+    <div className="p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1">
           <p className="text-sm text-zinc-200 font-medium leading-relaxed">{card.title}</p>
