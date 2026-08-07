@@ -39,18 +39,26 @@ async function kvSet(key, value) {
   await redis().set(key, JSON.stringify(value));
 }
 
-// Битрикс24 в install/open-POST присылает не "DOMAIN", а SERVER_ENDPOINT —
-// готовый базовый URL REST (например "https://portal39.mb-product.ru/rest/").
-// Используем его напрямую вместо того, чтобы собирать URL самим — это и есть
-// то, что реально прислал портал (подтверждено диагностикой в проде).
 function normalizeRestBase(raw) {
   if (!raw) return null;
   return raw.endsWith('/') ? raw : `${raw}/`;
 }
 
+// Что означают поля в install/open-POST и в ответе oauth.token (по докам
+// apidocs.bitrix24.com/settings/oauth/index.html):
+//   SERVER_ENDPOINT / server_endpoint — адрес СЕРВЕРА АВТОРИЗАЦИИ (oauth.bitrix.info
+//     и региональные зеркала вроде oauth.bitrix24.tech). Годится только для
+//     обмена токенов (oauth.token), а НЕ для вызова обычных REST-методов —
+//     запрос profile через него отвечает "Access denied" (подтверждено в проде).
+//   CLIENT_ENDPOINT / client_endpoint — адрес REST-интерфейса САМОГО ПОРТАЛА
+//     (например "https://portal39.mb-product.ru/rest/"). Именно он нужен для
+//     profile/app.option.set и т.п.
+// В install-POST для этого приложения client_endpoint не присылается вовсе —
+// только SERVER_ENDPOINT. Поэтому сразу меняем REFRESH_ID на полноценный
+// токен через oauth.token — в его ответе client_endpoint/domain уже есть.
 const OAUTH_TOKEN_URL = 'https://oauth.bitrix.info/oauth/token/';
 
-async function refreshServiceToken(stored) {
+async function exchangeRefreshToken(refreshToken) {
   const clientId = process.env.BITRIX_CLIENT_ID;
   const clientSecret = process.env.BITRIX_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
@@ -61,22 +69,32 @@ async function refreshServiceToken(stored) {
   url.searchParams.set('grant_type', 'refresh_token');
   url.searchParams.set('client_id', clientId);
   url.searchParams.set('client_secret', clientSecret);
-  url.searchParams.set('refresh_token', stored.refresh_token);
+  url.searchParams.set('refresh_token', refreshToken);
 
   const res = await fetch(url.toString());
   const data = await res.json();
   if (!res.ok || !data.access_token) {
-    throw new Error(data.error_description || data.error || 'не удалось обновить токен Битрикс24');
+    const err = new Error(data.error_description || data.error || 'не удалось обменять токен Битрикс24');
+    err.bxErrorCode = data.error || null;
+    err.bxHttpStatus = res.status;
+    throw err;
   }
 
-  // oauth.token тоже возвращает server_endpoint — используем его, если есть,
-  // иначе оставляем прежний (домен/эндпоинт портала не меняется от обновления токена).
-  const fresh = {
+  const restBase = normalizeRestBase(data.client_endpoint) || (data.domain ? `https://${data.domain}/rest/` : null);
+  if (!restBase) {
+    throw new Error('oauth.token не вернул ни client_endpoint, ни domain');
+  }
+
+  return {
     access_token: data.access_token,
     refresh_token: data.refresh_token,
-    restBase: normalizeRestBase(data.server_endpoint) || stored.restBase,
+    restBase,
     expires_at: Date.now() + (Number(data.expires_in || 3600) - 60) * 1000,
   };
+}
+
+async function refreshServiceToken(stored) {
+  const fresh = await exchangeRefreshToken(stored.refresh_token);
   await kvSet(SERVICE_TOKEN_KEY, fresh);
   return fresh;
 }
@@ -95,22 +113,20 @@ export async function getServiceToken() {
 }
 
 // Вызывается из api/serve.js при каждом открытии приложения (Битрикс24 шлёт
-// POST с AUTH_ID/REFRESH_ID/SERVER_ENDPOINT открывшего пользователя). Если
-// это администратор портала — обновляем сервисный токен, которым потом
-// пользуется api/save-dashboard.js от имени любого сотрудника. Обычных
-// пользователей открытие приложения никак не затрагивает — текущий
-// сервисный токен просто не трогается.
+// POST с AUTH_ID/REFRESH_ID открывшего пользователя). Если это администратор
+// портала — обновляем сервисный токен, которым потом пользуется
+// api/save-dashboard.js от имени любого сотрудника. Обычных пользователей
+// открытие приложения никак не затрагивает — текущий сервисный токен просто
+// не трогается.
 export async function maybeCaptureServiceToken(fields, rawKeysSeen) {
-  const { serverEndpoint, authId, authExpires, refreshId } = fields;
-  const restBase = normalizeRestBase(serverEndpoint);
+  const { authId, authExpires, refreshId } = fields;
   const diag = {
     at: new Date().toISOString(),
     rawKeysSeen: rawKeysSeen || [],
-    restBase: restBase || null,
-    authIdLength: authId ? authId.length : 0,
-    hasServerEndpoint: Boolean(restBase),
     hasAuthId: Boolean(authId),
     hasRefreshId: Boolean(refreshId),
+    exchangeOk: null,
+    restBase: null,
     profileHttpStatus: null,
     profileOk: null,
     isAdmin: null,
@@ -119,7 +135,7 @@ export async function maybeCaptureServiceToken(fields, rawKeysSeen) {
     errorCode: null,
   };
 
-  if (!restBase || !authId || !refreshId) {
+  if (!authId || !refreshId) {
     try {
       await kvSet(LAST_OPEN_KEY, diag);
     } catch {
@@ -129,7 +145,15 @@ export async function maybeCaptureServiceToken(fields, rawKeysSeen) {
   }
 
   try {
-    const res = await fetch(`${restBase}profile?auth=${encodeURIComponent(authId)}`);
+    // REFRESH_ID из install-POST одноразовый, как и любой refresh_token —
+    // используем его сразу, чтобы получить настоящий client_endpoint портала
+    // (см. пояснение у OAUTH_TOKEN_URL выше). authId из POST после этого
+    // отбрасываем, используем access_token из ответа обмена.
+    const exchanged = await exchangeRefreshToken(refreshId);
+    diag.exchangeOk = true;
+    diag.restBase = exchanged.restBase;
+
+    const res = await fetch(`${exchanged.restBase}profile?auth=${encodeURIComponent(exchanged.access_token)}`);
     diag.profileHttpStatus = res.status;
     const data = await res.json();
     diag.profileOk = Boolean(data.result);
@@ -146,16 +170,13 @@ export async function maybeCaptureServiceToken(fields, rawKeysSeen) {
       return;
     }
 
-    await kvSet(SERVICE_TOKEN_KEY, {
-      access_token: authId,
-      refresh_token: refreshId,
-      restBase,
-      expires_at: Date.now() + (Number(authExpires || 3600) - 60) * 1000,
-    });
+    await kvSet(SERVICE_TOKEN_KEY, exchanged);
     diag.captured = true;
     await kvSet(LAST_OPEN_KEY, diag);
   } catch (err) {
+    diag.exchangeOk = diag.exchangeOk ?? false;
     diag.error = err instanceof Error ? err.message : String(err);
+    diag.errorCode = err && err.bxErrorCode ? err.bxErrorCode : null;
     try {
       await kvSet(LAST_OPEN_KEY, diag);
     } catch {
