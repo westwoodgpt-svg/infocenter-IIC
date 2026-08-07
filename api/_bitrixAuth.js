@@ -93,7 +93,11 @@ export async function maybeCaptureServiceToken({ domain, authId, authExpires, re
   try {
     const res = await fetch(`https://${domain}/rest/profile?auth=${encodeURIComponent(authId)}`);
     const data = await res.json();
-    if (!data.result || !data.result.ADMIN) return;
+    if (!data.result) {
+      console.warn('[bitrix] profile lookup failed on app open:', data.error_description || data.error || data);
+      return;
+    }
+    if (!data.result.ADMIN) return; // не администратор — не трогаем текущий сервисный токен
 
     await kvSet(SERVICE_TOKEN_KEY, {
       access_token: authId,
@@ -101,9 +105,21 @@ export async function maybeCaptureServiceToken({ domain, authId, authExpires, re
       domain,
       expires_at: Date.now() + (Number(authExpires || 3600) - 60) * 1000,
     });
-  } catch {
-    // портал недоступен / сеть — просто пропускаем попытку, не блокируем открытие страницы
+    console.log('[bitrix] service token captured from admin open, domain =', domain);
+  } catch (err) {
+    // портал недоступен / сеть / Redis не подключён — не блокируем открытие страницы,
+    // но оставляем след в логах функции для диагностики.
+    console.error('[bitrix] maybeCaptureServiceToken failed:', err instanceof Error ? err.message : err);
   }
+}
+
+// Только проверяет наличие сервисного токена, не обновляя его — для
+// диагностического эндпоинта api/bitrix-status.js. В отличие от
+// getServiceToken() не расходует refresh_token (он одноразовый).
+export async function peekServiceToken() {
+  const stored = await kvGet(SERVICE_TOKEN_KEY);
+  if (!stored) return null;
+  return { domain: stored.domain, expiresAt: stored.expires_at, valid: Date.now() < stored.expires_at };
 }
 
 // Лёгкая проверка, что запрос на сохранение действительно пришёл от текущего
