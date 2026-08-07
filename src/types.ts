@@ -48,6 +48,7 @@ export interface PersonCard extends BaseCard {
   role: string;
   tags: string[];
   note?: string;
+  photoUrl?: string;
 }
 
 export type AnyCard = KpiCard | ChartCard | MoneyCard | ListCard | PersonCard;

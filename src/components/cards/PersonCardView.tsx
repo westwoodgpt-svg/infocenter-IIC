@@ -5,9 +5,17 @@ export default function PersonCardView({ card }: { card: PersonCard }) {
   return (
     <div className="p-6 flex flex-col gap-4">
       <div className="flex items-start gap-4">
-        <span className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20 flex-shrink-0">
-          <UserRound className="w-5 h-5" />
-        </span>
+        {card.photoUrl ? (
+          <img
+            src={card.photoUrl}
+            alt={card.title}
+            className="w-11 h-11 rounded-xl object-cover border border-indigo-500/20 flex-shrink-0"
+          />
+        ) : (
+          <span className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20 flex-shrink-0">
+            <UserRound className="w-5 h-5" />
+          </span>
+        )}
         <div>
           <h3 className="text-base font-bold text-white font-display">{card.title}</h3>
           <p className="text-xs text-indigo-400 font-medium mt-0.5">{card.role}</p>

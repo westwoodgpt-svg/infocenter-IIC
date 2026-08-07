@@ -148,6 +148,7 @@ export default function CardEditorModal({ open, editingCard, onClose, onSave }: 
                             ...draft,
                             title,
                             role: matched && !draft.role ? matched.position : draft.role,
+                            photoUrl: matched ? matched.photo : draft.photoUrl,
                           });
                           return;
                         }
@@ -303,6 +304,12 @@ function PersonFields({ draft, setDraft }: { draft: PersonCard; setDraft: (c: An
   };
   return (
     <div className="space-y-4">
+      {draft.photoUrl && (
+        <div className="flex items-center gap-3">
+          <img src={draft.photoUrl} alt={draft.title} className="w-10 h-10 rounded-lg object-cover border border-[#27272a]" />
+          <span className="text-[11px] text-[#71717a]">Фото подставлено из профиля сотрудника в Битрикс24</span>
+        </div>
+      )}
       <div>
         <label className={labelCls()}>Роль / должность</label>
         <input className={inputCls()} value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value })} />

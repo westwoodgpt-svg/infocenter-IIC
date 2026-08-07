@@ -31,7 +31,7 @@ export default async function handler(req, res) {
       hasRedisUrl,
       hasBitrixCreds,
       serviceToken: token
-        ? { domain: token.domain, valid: token.valid, expiresAt: new Date(token.expiresAt).toISOString() }
+        ? { restBase: token.restBase, valid: token.valid, expiresAt: new Date(token.expiresAt).toISOString() }
         : null,
       lastOpenAttempt,
       hint: token

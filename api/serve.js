@@ -36,7 +36,7 @@ export default async function handler(req, res) {
       const params = typeof body === 'string' ? Object.fromEntries(new URLSearchParams(body)) : body;
       await maybeCaptureServiceToken(
         {
-          domain: params.DOMAIN,
+          serverEndpoint: params.SERVER_ENDPOINT,
           authId: params.AUTH_ID,
           authExpires: params.AUTH_EXPIRES,
           refreshId: params.REFRESH_ID,

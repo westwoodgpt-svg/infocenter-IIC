@@ -39,8 +39,15 @@ async function kvSet(key, value) {
   await redis().set(key, JSON.stringify(value));
 }
 
-// Единая точка OAuth для облачных порталов Битрикс24 (domain передаётся в
-// запросе/ответе, отдельный per-portal URL не нужен).
+// Битрикс24 в install/open-POST присылает не "DOMAIN", а SERVER_ENDPOINT —
+// готовый базовый URL REST (например "https://portal39.mb-product.ru/rest/").
+// Используем его напрямую вместо того, чтобы собирать URL самим — это и есть
+// то, что реально прислал портал (подтверждено диагностикой в проде).
+function normalizeRestBase(raw) {
+  if (!raw) return null;
+  return raw.endsWith('/') ? raw : `${raw}/`;
+}
+
 const OAUTH_TOKEN_URL = 'https://oauth.bitrix.info/oauth/token/';
 
 async function refreshServiceToken(stored) {
@@ -62,10 +69,12 @@ async function refreshServiceToken(stored) {
     throw new Error(data.error_description || data.error || 'не удалось обновить токен Битрикс24');
   }
 
+  // oauth.token тоже возвращает server_endpoint — используем его, если есть,
+  // иначе оставляем прежний (домен/эндпоинт портала не меняется от обновления токена).
   const fresh = {
     access_token: data.access_token,
     refresh_token: data.refresh_token,
-    domain: data.domain || stored.domain,
+    restBase: normalizeRestBase(data.server_endpoint) || stored.restBase,
     expires_at: Date.now() + (Number(data.expires_in || 3600) - 60) * 1000,
   };
   await kvSet(SERVICE_TOKEN_KEY, fresh);
@@ -86,17 +95,18 @@ export async function getServiceToken() {
 }
 
 // Вызывается из api/serve.js при каждом открытии приложения (Битрикс24 шлёт
-// POST с AUTH_ID/REFRESH_ID открывшего пользователя). Если это администратор
-// портала — обновляем сервисный токен, которым потом пользуется
-// api/save-dashboard.js от имени любого сотрудника. Обычных пользователей
-// открытие приложения никак не затрагивает — текущий сервисный токен просто
-// не трогается.
+// POST с AUTH_ID/REFRESH_ID/SERVER_ENDPOINT открывшего пользователя). Если
+// это администратор портала — обновляем сервисный токен, которым потом
+// пользуется api/save-dashboard.js от имени любого сотрудника. Обычных
+// пользователей открытие приложения никак не затрагивает — текущий
+// сервисный токен просто не трогается.
 export async function maybeCaptureServiceToken(fields, rawKeysSeen) {
-  const { domain, authId, authExpires, refreshId } = fields;
+  const { serverEndpoint, authId, authExpires, refreshId } = fields;
+  const restBase = normalizeRestBase(serverEndpoint);
   const diag = {
     at: new Date().toISOString(),
     rawKeysSeen: rawKeysSeen || [],
-    hasDomain: Boolean(domain),
+    hasServerEndpoint: Boolean(restBase),
     hasAuthId: Boolean(authId),
     hasRefreshId: Boolean(refreshId),
     profileOk: null,
@@ -105,9 +115,7 @@ export async function maybeCaptureServiceToken(fields, rawKeysSeen) {
     error: null,
   };
 
-  if (!domain || !authId || !refreshId) {
-    // Битрикс24 прислал POST, но без ожидаемых полей — например, другой Content-Type
-    // или формат payload. Сохраняем, какие ключи реально пришли, для диагностики.
+  if (!restBase || !authId || !refreshId) {
     try {
       await kvSet(LAST_OPEN_KEY, diag);
     } catch {
@@ -117,7 +125,7 @@ export async function maybeCaptureServiceToken(fields, rawKeysSeen) {
   }
 
   try {
-    const res = await fetch(`https://${domain}/rest/profile?auth=${encodeURIComponent(authId)}`);
+    const res = await fetch(`${restBase}profile?auth=${encodeURIComponent(authId)}`);
     const data = await res.json();
     diag.profileOk = Boolean(data.result);
     if (!data.result) {
@@ -135,7 +143,7 @@ export async function maybeCaptureServiceToken(fields, rawKeysSeen) {
     await kvSet(SERVICE_TOKEN_KEY, {
       access_token: authId,
       refresh_token: refreshId,
-      domain,
+      restBase,
       expires_at: Date.now() + (Number(authExpires || 3600) - 60) * 1000,
     });
     diag.captured = true;
@@ -162,12 +170,14 @@ export async function peekLastOpenAttempt() {
 export async function peekServiceToken() {
   const stored = await kvGet(SERVICE_TOKEN_KEY);
   if (!stored) return null;
-  return { domain: stored.domain, expiresAt: stored.expires_at, valid: Date.now() < stored.expires_at };
+  return { restBase: stored.restBase, expiresAt: stored.expires_at, valid: Date.now() < stored.expires_at };
 }
 
 // Лёгкая проверка, что запрос на сохранение действительно пришёл от текущего
 // авторизованного сотрудника этого портала (а не произвольного POST извне).
 // Не проверяет права — только то, что токен валиден прямо сейчас.
+// auth.domain приходит из клиентского BX24.getAuth() (отдельный от install-POST
+// API, там поле "domain" — штатное и документированное).
 export async function verifyUserToken({ accessToken, domain }) {
   if (!accessToken || !domain) return false;
   try {
@@ -185,7 +195,7 @@ export async function bxAppOptionSet(key, value) {
   body.set('auth', token.access_token);
   body.set(`options[${key}]`, value);
 
-  const res = await fetch(`https://${token.domain}/rest/app.option.set`, {
+  const res = await fetch(`${token.restBase}app.option.set`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
