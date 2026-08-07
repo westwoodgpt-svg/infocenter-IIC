@@ -1,7 +1,10 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "routes": [{ "src": "/(.*)", "dest": "/api/serve" }],
+  "routes": [
+    { "src": "/api/save-dashboard", "dest": "/api/save-dashboard" },
+    { "src": "/(.*)", "dest": "/api/serve" }
+  ],
   "functions": {
     "api/serve.js": {
       "includeFiles": "dist/**"
