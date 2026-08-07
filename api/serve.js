@@ -19,34 +19,30 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
-function readBody(req) {
-  return new Promise((resolve) => {
-    let data = '';
-    req.on('data', (chunk) => (data += chunk));
-    req.on('end', () => resolve(data));
-    req.on('error', () => resolve(''));
-  });
-}
-
 export default async function handler(req, res) {
   if (req.method === 'POST') {
     // Битрикс24 открывает локальные приложения POST-запросом с AUTH_ID/REFRESH_ID
     // открывшего пользователя. Если это администратор портала — обновляем
     // сервисный токен для api/save-dashboard.js (см. _bitrixAuth.js).
     //
-    // ВАЖНО: обязательно дожидаемся (await) этой обработки перед отправкой
-    // ответа. Serverless-функция Vercel замораживается сразу после отправки
-    // HTTP-ответа — необождённый (fire-and-forget) промис здесь просто не
-    // успевает выполниться, и токен никогда не сохраняется.
+    // ВАЖНО: 1) обязательно дожидаемся (await) этой обработки перед отправкой
+    // ответа — serverless-функция Vercel замораживается сразу после отправки
+    // HTTP-ответа, необождённый промис просто не успевает выполниться.
+    // 2) НЕ читаем req как сырой поток (req.on('data')) — Vercel уже разобрал
+    // тело в req.body до вызова этого обработчика и «слил» исходный поток,
+    // поэтому попытка читать его вручную всегда возвращала пустую строку.
     try {
-      const raw = await readBody(req);
-      const params = new URLSearchParams(raw);
-      await maybeCaptureServiceToken({
-        domain: params.get('DOMAIN'),
-        authId: params.get('AUTH_ID'),
-        authExpires: params.get('AUTH_EXPIRES'),
-        refreshId: params.get('REFRESH_ID'),
-      });
+      const body = req.body || {};
+      const params = typeof body === 'string' ? Object.fromEntries(new URLSearchParams(body)) : body;
+      await maybeCaptureServiceToken(
+        {
+          domain: params.DOMAIN,
+          authId: params.AUTH_ID,
+          authExpires: params.AUTH_EXPIRES,
+          refreshId: params.REFRESH_ID,
+        },
+        Object.keys(params)
+      );
     } catch (err) {
       console.error('[bitrix] serve.js POST handling failed:', err instanceof Error ? err.message : err);
     }

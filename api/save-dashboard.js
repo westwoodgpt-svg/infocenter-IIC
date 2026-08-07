@@ -5,28 +5,23 @@ import { verifyUserToken, bxAppOptionSet } from './_bitrixAuth.js';
 
 const OPTION_KEY = 'iic_dashboard_v1';
 
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    let data = '';
-    req.on('data', (chunk) => (data += chunk));
-    req.on('end', () => resolve(data));
-    req.on('error', reject);
-  });
-}
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ ok: false, error: 'method not allowed' });
     return;
   }
 
-  let payload;
-  try {
-    const raw = await readBody(req);
-    payload = JSON.parse(raw);
-  } catch {
-    res.status(400).json({ ok: false, error: 'некорректный JSON в теле запроса' });
-    return;
+  // req.body уже разобран платформой Vercel (Content-Type: application/json из
+  // fetch() в src/bitrix.ts) — читать req как сырой поток здесь не нужно и не
+  // работает: Vercel уже потребляет исходный stream до вызова этого обработчика.
+  let payload = req.body;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload);
+    } catch {
+      res.status(400).json({ ok: false, error: 'некорректный JSON в теле запроса' });
+      return;
+    }
   }
 
   const { state, auth } = payload || {};

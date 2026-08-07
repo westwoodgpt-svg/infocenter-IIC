@@ -9,6 +9,9 @@
 import Redis from 'ioredis';
 
 const SERVICE_TOKEN_KEY = 'iic:bx-service-token';
+// Диагностика последней попытки открытия приложения — чтобы можно было
+// понять, что произошло, через api/bitrix-status.js, не заходя в логи Vercel.
+const LAST_OPEN_KEY = 'iic:bx-last-open';
 
 // Redis Cloud (интеграция Vercel Marketplace) выдаёт обычную TCP-строку
 // подключения в REDIS_URL, а не REST API — поэтому обычный клиент, не
@@ -88,16 +91,46 @@ export async function getServiceToken() {
 // api/save-dashboard.js от имени любого сотрудника. Обычных пользователей
 // открытие приложения никак не затрагивает — текущий сервисный токен просто
 // не трогается.
-export async function maybeCaptureServiceToken({ domain, authId, authExpires, refreshId }) {
-  if (!domain || !authId || !refreshId) return;
+export async function maybeCaptureServiceToken(fields, rawKeysSeen) {
+  const { domain, authId, authExpires, refreshId } = fields;
+  const diag = {
+    at: new Date().toISOString(),
+    rawKeysSeen: rawKeysSeen || [],
+    hasDomain: Boolean(domain),
+    hasAuthId: Boolean(authId),
+    hasRefreshId: Boolean(refreshId),
+    profileOk: null,
+    isAdmin: null,
+    captured: false,
+    error: null,
+  };
+
+  if (!domain || !authId || !refreshId) {
+    // Битрикс24 прислал POST, но без ожидаемых полей — например, другой Content-Type
+    // или формат payload. Сохраняем, какие ключи реально пришли, для диагностики.
+    try {
+      await kvSet(LAST_OPEN_KEY, diag);
+    } catch {
+      // Redis недоступен — просто пропускаем, не блокируем открытие страницы
+    }
+    return;
+  }
+
   try {
     const res = await fetch(`https://${domain}/rest/profile?auth=${encodeURIComponent(authId)}`);
     const data = await res.json();
+    diag.profileOk = Boolean(data.result);
     if (!data.result) {
-      console.warn('[bitrix] profile lookup failed on app open:', data.error_description || data.error || data);
+      diag.error = data.error_description || data.error || 'profile lookup failed';
+      await kvSet(LAST_OPEN_KEY, diag);
       return;
     }
-    if (!data.result.ADMIN) return; // не администратор — не трогаем текущий сервисный токен
+    diag.isAdmin = Boolean(data.result.ADMIN);
+    if (!data.result.ADMIN) {
+      // не администратор — не трогаем текущий сервисный токен
+      await kvSet(LAST_OPEN_KEY, diag);
+      return;
+    }
 
     await kvSet(SERVICE_TOKEN_KEY, {
       access_token: authId,
@@ -105,12 +138,22 @@ export async function maybeCaptureServiceToken({ domain, authId, authExpires, re
       domain,
       expires_at: Date.now() + (Number(authExpires || 3600) - 60) * 1000,
     });
-    console.log('[bitrix] service token captured from admin open, domain =', domain);
+    diag.captured = true;
+    await kvSet(LAST_OPEN_KEY, diag);
   } catch (err) {
-    // портал недоступен / сеть / Redis не подключён — не блокируем открытие страницы,
-    // но оставляем след в логах функции для диагностики.
-    console.error('[bitrix] maybeCaptureServiceToken failed:', err instanceof Error ? err.message : err);
+    diag.error = err instanceof Error ? err.message : String(err);
+    try {
+      await kvSet(LAST_OPEN_KEY, diag);
+    } catch {
+      // Redis недоступен — не блокируем открытие страницы
+    }
   }
+}
+
+// Диагностика последней попытки захвата токена (успешной или нет) — для
+// api/bitrix-status.js.
+export async function peekLastOpenAttempt() {
+  return kvGet(LAST_OPEN_KEY);
 }
 
 // Только проверяет наличие сервисного токена, не обновляя его — для
