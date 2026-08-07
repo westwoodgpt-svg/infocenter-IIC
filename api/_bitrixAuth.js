@@ -6,20 +6,34 @@
 // открыто в интерфейсе, получает ошибку доступа. Поэтому запись выполняется
 // сервером под токеном, полученным один раз от администратора (см.
 // maybeCaptureServiceToken), а не напрямую браузером пользователя.
-import { Redis } from '@upstash/redis';
+import Redis from 'ioredis';
 
 const SERVICE_TOKEN_KEY = 'iic:bx-service-token';
 
-// Поддерживаем оба варианта имён переменных окружения — Vercel Marketplace
-// (интеграция «Upstash for Redis» / бывший Vercel KV) выставляет KV_REST_API_*,
-// прямая интеграция Upstash — UPSTASH_REDIS_REST_*.
+// Redis Cloud (интеграция Vercel Marketplace) выдаёт обычную TCP-строку
+// подключения в REDIS_URL, а не REST API — поэтому обычный клиент, не
+// @upstash/redis. Клиент переиспользуется между вызовами в пределах одного
+// «тёплого» экземпляра функции, чтобы не упираться в лимит подключений
+// бесплатного плана (30 соединений).
+let client;
 function redis() {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) {
-    throw new Error('Redis (KV_REST_API_URL/KV_REST_API_TOKEN) не подключён к проекту на Vercel');
+  const url = process.env.REDIS_URL;
+  if (!url) {
+    throw new Error('Redis (REDIS_URL) не подключён к проекту на Vercel');
   }
-  return new Redis({ url, token });
+  if (!client) {
+    client = new Redis(url, { maxRetriesPerRequest: 2, lazyConnect: true });
+  }
+  return client;
+}
+
+async function kvGet(key) {
+  const raw = await redis().get(key);
+  return raw ? JSON.parse(raw) : null;
+}
+
+async function kvSet(key, value) {
+  await redis().set(key, JSON.stringify(value));
 }
 
 // Единая точка OAuth для облачных порталов Битрикс24 (domain передаётся в
@@ -51,14 +65,14 @@ async function refreshServiceToken(stored) {
     domain: data.domain || stored.domain,
     expires_at: Date.now() + (Number(data.expires_in || 3600) - 60) * 1000,
   };
-  await redis().set(SERVICE_TOKEN_KEY, fresh);
+  await kvSet(SERVICE_TOKEN_KEY, fresh);
   return fresh;
 }
 
 // Возвращает действующий сервисный токен, обновляя его через refresh_token,
 // если он истёк. Бросает понятную ошибку, если токен ещё ни разу не был получен.
 export async function getServiceToken() {
-  const stored = await redis().get(SERVICE_TOKEN_KEY);
+  const stored = await kvGet(SERVICE_TOKEN_KEY);
   if (!stored) {
     throw new Error(
       'Сервисный токен ещё не получен — попросите администратора один раз открыть приложение в Битрикс24'
@@ -81,7 +95,7 @@ export async function maybeCaptureServiceToken({ domain, authId, authExpires, re
     const data = await res.json();
     if (!data.result || !data.result.ADMIN) return;
 
-    await redis().set(SERVICE_TOKEN_KEY, {
+    await kvSet(SERVICE_TOKEN_KEY, {
       access_token: authId,
       refresh_token: refreshId,
       domain,

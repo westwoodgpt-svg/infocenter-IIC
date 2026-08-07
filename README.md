@@ -68,9 +68,11 @@ TypeScript + Recharts, собран по образцу [infocenter-RCK](https:/
 
 Без этого шага сохранение работать не будет — дашборд будет только читаться.
 
-1. **Storage → Create Database → Redis** (интеграция Upstash) → подключить к проекту
-   `infocenter-iic`. Vercel сам добавит переменные окружения `KV_REST_API_URL` /
-   `KV_REST_API_TOKEN` — их вручную вводить не нужно.
+1. **Storage → Create Database → Redis** (Redis Cloud) → подключить к проекту `infocenter-iic`.
+   Storage Type — **RAM only**, план **Free (30 MB)** достаточно (хранится один маленький токен,
+   а не данные дашборда — они живут в `app.option` Битрикс24). При подключении к проекту в поле
+   **Custom Prefix** указать `REDIS` — тогда Vercel сам создаст переменную `REDIS_URL`, её вручную
+   вводить не нужно.
 2. В **Settings → Environment Variables** проекта добавить:
    - `BITRIX_CLIENT_ID` — «Ключ приложения» из шага выше
    - `BITRIX_CLIENT_SECRET` — «Секретный ключ» из шага выше
