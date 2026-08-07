@@ -32,19 +32,24 @@ export default async function handler(req, res) {
   if (req.method === 'POST') {
     // Битрикс24 открывает локальные приложения POST-запросом с AUTH_ID/REFRESH_ID
     // открывшего пользователя. Если это администратор портала — обновляем
-    // сервисный токен для api/save-dashboard.js (см. _bitrixAuth.js). Не блокируем
-    // отдачу страницы этим запросом — обрабатываем его в фоне.
-    readBody(req)
-      .then((raw) => {
-        const params = new URLSearchParams(raw);
-        return maybeCaptureServiceToken({
-          domain: params.get('DOMAIN'),
-          authId: params.get('AUTH_ID'),
-          authExpires: params.get('AUTH_EXPIRES'),
-          refreshId: params.get('REFRESH_ID'),
-        });
-      })
-      .catch(() => {});
+    // сервисный токен для api/save-dashboard.js (см. _bitrixAuth.js).
+    //
+    // ВАЖНО: обязательно дожидаемся (await) этой обработки перед отправкой
+    // ответа. Serverless-функция Vercel замораживается сразу после отправки
+    // HTTP-ответа — необождённый (fire-and-forget) промис здесь просто не
+    // успевает выполниться, и токен никогда не сохраняется.
+    try {
+      const raw = await readBody(req);
+      const params = new URLSearchParams(raw);
+      await maybeCaptureServiceToken({
+        domain: params.get('DOMAIN'),
+        authId: params.get('AUTH_ID'),
+        authExpires: params.get('AUTH_EXPIRES'),
+        refreshId: params.get('REFRESH_ID'),
+      });
+    } catch (err) {
+      console.error('[bitrix] serve.js POST handling failed:', err instanceof Error ? err.message : err);
+    }
   }
 
   const host = req.headers.host || 'localhost';
