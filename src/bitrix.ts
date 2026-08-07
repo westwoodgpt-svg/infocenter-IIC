@@ -13,6 +13,7 @@ declare global {
     BX24?: {
       init: (cb: () => void) => void;
       callMethod: (method: string, params: Record<string, unknown>, cb: (result: BXResult) => void) => void;
+      getAuth: () => { access_token: string; domain: string; member_id?: string } | false;
     };
   }
 }
@@ -98,20 +99,38 @@ export function fetchDashboardOption(): Promise<{ state: DashboardState | null; 
   });
 }
 
-export function saveDashboardOption(state: DashboardState): Promise<{ ok: boolean; error: string | null }> {
-  return new Promise((resolve) => {
-    if (!hasBX24()) {
-      resolve({ ok: false, error: 'нет соединения с Битрикс24' });
-      return;
-    }
-    window.BX24!.callMethod('app.option.set', { options: { [OPTION_KEY]: JSON.stringify(state) } }, (result) => {
-      if (result.error()) {
-        resolve({ ok: false, error: bxErrorMessage(result) });
-        return;
-      }
-      resolve({ ok: true, error: null });
+// Сохранение идёт не напрямую в Битрикс24 из браузера (app.option.set доступен
+// только администраторам портала), а через наш серверный эндпоинт: он
+// проверяет, что у вызывающего есть действующая сессия портала, и пишет в
+// app.option от имени отдельного сервисного (администраторского) токена —
+// так редактировать может любой сотрудник. См. api/_bitrixAuth.js.
+export async function saveDashboardOption(state: DashboardState): Promise<{ ok: boolean; error: string | null }> {
+  if (!hasBX24()) {
+    return { ok: false, error: 'нет соединения с Битрикс24' };
+  }
+
+  const auth = window.BX24!.getAuth();
+  if (!auth) {
+    return { ok: false, error: 'не удалось получить авторизацию Битрикс24' };
+  }
+
+  try {
+    const res = await fetch('/api/save-dashboard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        state,
+        auth: { access_token: auth.access_token, domain: auth.domain },
+      }),
     });
-  });
+    const data = (await res.json()) as { ok: boolean; error?: string };
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, error: null };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'сетевая ошибка' };
+  }
 }
 
 interface RawBxUser {
