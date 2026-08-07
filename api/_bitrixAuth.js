@@ -106,13 +106,17 @@ export async function maybeCaptureServiceToken(fields, rawKeysSeen) {
   const diag = {
     at: new Date().toISOString(),
     rawKeysSeen: rawKeysSeen || [],
+    restBase: restBase || null,
+    authIdLength: authId ? authId.length : 0,
     hasServerEndpoint: Boolean(restBase),
     hasAuthId: Boolean(authId),
     hasRefreshId: Boolean(refreshId),
+    profileHttpStatus: null,
     profileOk: null,
     isAdmin: null,
     captured: false,
     error: null,
+    errorCode: null,
   };
 
   if (!restBase || !authId || !refreshId) {
@@ -126,10 +130,12 @@ export async function maybeCaptureServiceToken(fields, rawKeysSeen) {
 
   try {
     const res = await fetch(`${restBase}profile?auth=${encodeURIComponent(authId)}`);
+    diag.profileHttpStatus = res.status;
     const data = await res.json();
     diag.profileOk = Boolean(data.result);
     if (!data.result) {
-      diag.error = data.error_description || data.error || 'profile lookup failed';
+      diag.error = data.error_description || 'profile lookup failed';
+      diag.errorCode = data.error || null;
       await kvSet(LAST_OPEN_KEY, diag);
       return;
     }
